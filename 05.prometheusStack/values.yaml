@@ -1,0 +1,82 @@
+alertmanager:
+
+  ## Deploy alertmanager
+  ##
+  enabled: false
+
+grafana:
+  persistence:
+    enabled: true
+    storageClassName: "openebs-zfs-data"
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+  enabled: true
+  service:
+    type: LoadBalancer
+
+  grafana.ini:
+    server:
+      root_url: http://10.111.0.34
+    auth.generic_oauth:
+      enabled: true
+      name: Keycloak
+      allow_sign_up: true
+      client_id: grafana
+      client_secret: $__file{/etc/secrets/grafana-client-secret/client-secret}
+      scopes: openid email profile
+      auth_url: http://10.111.0.52:8080/realms/grafana_realm/protocol/openid-connect/auth?prompt=login
+      token_url: http://10.111.0.52:8080/realms/grafana_realm/protocol/openid-connect/token
+      api_url: http://10.111.0.52:8080/realms/grafana_realm/protocol/openid-connect/userinfo
+      role_attribute_path: contains(groups[*], 'Admin') && 'Admin' || 'Viewer'
+      logout_url: http://10.111.0.52:8080/realms/grafana_realm/protocol/openid-connect/logout?redirect_uri=http://10.111.0.34/login
+
+  extraSecretMounts:
+    - name: grafana-client-secret
+      secretName: grafana-client-secret
+      mountPath: /etc/secrets/grafana-client-secret
+      readOnly: true
+
+
+prometheus:
+  prometheusSpec:
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+    additionalScrapeConfigs:
+      - job_name: minio-job
+        bearer_token: eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJwcm9tZXRoZXVzIiwic3ViIjoidTZyOEoxd1I2MXdaTmF1eiIsImV4cCI6NDg5Mjg1NzQ4MH0.Jtrxng9hm02Ko6mN1ClAB4zRvl53W3T-E08cmmfss_JoaIzRhVLOuHh4e5VGllzyZsFW8-z1SDGbl6BLon4aYw
+        metrics_path: /minio/v2/metrics/cluster
+        scheme: http
+        static_configs:
+        - targets:
+          - 10.111.0.45
+
+      - job_name: spark-master-job
+        metrics_path: /metrics/prometheus
+        scheme: http
+        static_configs:
+        - targets:
+          - 10.111.0.48
+
+      - job_name: spark-worker-job
+        metrics_path: /metrics/prometheus
+        scheme: http
+        static_configs:
+        - targets:
+          - 10.111.0.51:8080
+      - job_name: spark-workers
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            regex: "worker"
+            action: keep
+          - source_labels: [__address__]
+            regex: "(.*):.*"
+            replacement: "${1}:8080"
+            target_label: __address__
